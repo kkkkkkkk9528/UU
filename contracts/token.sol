@@ -179,6 +179,14 @@ contract BEP20TokenUpgradeable is
     }
     
     /**
+     * @notice 获取批量转账最大接收者数量
+     * @return 最大接收者数量
+     */
+    function maxBatchRecipients() external pure returns (uint256) {
+        return _MAX_BATCH_RECIPIENTS;
+    }
+    
+    /**
      * @notice 获取合约版本
      * @return 版本字符串
      */
