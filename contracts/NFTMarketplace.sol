@@ -11,7 +11,7 @@ import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 
 /**
  * @title NFT 交易市场合约
- * @author 塞翁马团队 (Saiweng Ma Team)
+ * @author 塞翁马团队 (Saiweng Ma Team)1
  * @notice 支持固定价格销售、拍卖、报价、版税分配的 NFT 交易市场
  * @dev 支持 ETH 和 ERC20 代币支付，集成 EIP-2981 版税标准
  * 

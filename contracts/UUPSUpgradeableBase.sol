@@ -10,7 +10,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 /**
  * @title UUPS Upgradeable Base Contract
  * @author SWM Team
- * @notice 可升级合约基类，支持多签钱包和 DAO 治理
+ * @notice 可升级合约基类，支持多签钱包和 DAO 治理1
  * 
  * @dev 
  * 权限优先级 (从高到低):
