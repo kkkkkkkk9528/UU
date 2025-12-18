@@ -1,0 +1,685 @@
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/interfaces/IERC2981.sol";
+
+/**
+ * @title NFT
+ * @author SWM Team
+ * @notice 现代化NFT合约，支持多等级铸造、灵活支付、版税分配
+ * @dev 实现ERC721、ERC2981标准，优化gas消耗和代码可维护性
+ */
+contract NFT is ERC721, ERC721URIStorage, IERC2981, Ownable2Step, ReentrancyGuard, Pausable {
+
+    // ============ 类型定义 ============
+
+    /// @notice NFT等级枚举
+    enum Level { Common, Rare, Epic }
+
+    /// @notice 角色属性结构
+    struct Character {
+        Level level;
+        uint8[5] stats; // [攻击, 防御, 速度, 血量, 魔法]
+    }
+
+    /// @notice 版税配置结构
+    struct RoyaltyInfo {
+        address receiver;
+        uint96 bps;
+    }
+
+    // ============ 状态变量 ============
+
+    /// @notice 下一个代币ID
+    uint256 private _nextTokenId;
+    
+    /// @notice 最大供应量（0表示无限制）
+    uint256 public maxSupply;
+    
+    /// @notice 代币角色属性
+    mapping(uint256 => Character) public characters;
+
+    /// @notice 等级价格配置（ETH）
+    mapping(Level => uint256) public levelPrices;
+    
+    /// @notice 接受的ERC20代币
+    mapping(address => bool) public acceptedTokens;
+    
+    /// @notice 默认版税配置
+    address public royaltyReceiver;
+    uint96 public defaultRoyaltyBps;
+    
+    /// @notice 单个代币的版税配置
+    mapping(uint256 => RoyaltyInfo) private _tokenRoyalties;
+    
+    // ============ 常量 ============
+
+    /// @dev 批量铸造上限
+    uint256 private constant MAX_BATCH_SIZE = 100;
+
+    /// @dev 查询代币上限
+    uint256 private constant MAX_QUERY_SIZE = 1000;
+    
+    /// @dev 版税基点分母（10000 = 100%）
+    uint96 private constant BPS_DENOMINATOR = 10000;
+    
+    // ============ 事件 ============
+    
+    event NFTMinted(address indexed to, uint256 indexed tokenId, Level level, string uri);
+    event BatchMinted(address indexed to, uint256 startId, uint256 count, Level level);
+    event LevelPriceUpdated(Level indexed level, uint256 newPrice);
+    event TokenAcceptanceUpdated(address indexed token, bool accepted);
+    event DefaultRoyaltyUpdated(address indexed receiver, uint96 bps);
+    event TokenRoyaltyUpdated(uint256 indexed tokenId, address indexed receiver, uint96 bps);
+    event MaxSupplyUpdated(uint256 newMaxSupply);
+    event FundsWithdrawn(address indexed token, address indexed to, uint256 amount);
+
+    // ============ 错误定义 ============
+    
+    error InvalidAddress();
+    error InvalidAmount();
+    error InvalidPrice();
+    error InvalidURI();
+    error ExceedsMaxSupply();
+    error ExceedsBatchLimit();
+    error InsufficientPayment();
+    error TokenNotAccepted();
+    error PriceNotSet();
+    error RoyaltyTooHigh();
+    error TransferFailed();
+    error NoBalance();
+
+    // ============ 构造函数 ============
+    
+    /**
+     * @notice 初始化NFT合约
+     * @param name NFT名称
+     * @param symbol NFT符号
+     * @param _royaltyReceiver 版税接收地址
+     * @param _royaltyBps 版税基点（10000 = 100%）
+     * @param _maxSupply 最大供应量（0 = 无限制）
+     */
+    constructor(
+        string memory name,
+        string memory symbol,
+        address _royaltyReceiver,
+        uint96 _royaltyBps,
+        uint256 _maxSupply
+    ) payable ERC721(name, symbol) Ownable(msg.sender) {
+        if (_royaltyReceiver == address(0)) revert InvalidAddress();
+        if (_royaltyBps > BPS_DENOMINATOR) revert RoyaltyTooHigh();
+        
+        royaltyReceiver = _royaltyReceiver;
+        defaultRoyaltyBps = _royaltyBps;
+        maxSupply = _maxSupply;
+    }
+    
+    // ============ 内部核心函数 ============
+
+    /**
+     * @dev 核心铸造逻辑
+     */
+    function _mintNFT(address to, Level lvl, string calldata uri) private returns (uint256 tokenId) {
+        if (to == address(0)) revert InvalidAddress();
+        if (bytes(uri).length == 0) revert InvalidURI();
+        
+        uint256 nextId = _nextTokenId;
+        uint256 _maxSupply = maxSupply;
+        if (_maxSupply != 0) {
+            if (nextId >= _maxSupply) revert ExceedsMaxSupply();
+        }
+
+        tokenId = nextId;
+        unchecked {
+            _nextTokenId = nextId + 1;
+        }
+        
+        // 生成随机属性
+        uint8[5] memory stats = _generateStats(lvl, tokenId);
+        characters[tokenId] = Character({level: lvl, stats: stats});
+
+        // 安全铸造
+        _safeMint(to, tokenId);
+        _setTokenURI(tokenId, uri);
+
+        emit NFTMinted(to, tokenId, lvl, uri);
+    }
+
+    /**
+     * @dev 批量铸造核心逻辑
+     */
+    function _batchMintNFT(address to, Level lvl, string[] calldata uris) private returns (uint256[] memory tokenIds) {
+        if (to == address(0)) revert InvalidAddress();
+        
+        uint256 count = uris.length;
+        if (count == 0) revert ExceedsBatchLimit();
+        if (count > MAX_BATCH_SIZE) revert ExceedsBatchLimit();
+        
+        uint256 nextId = _nextTokenId;
+        uint256 _maxSupply = maxSupply;
+        if (_maxSupply != 0) {
+            if (nextId + count > _maxSupply) revert ExceedsMaxSupply();
+        }
+
+        tokenIds = new uint256[](count);
+        uint256 startId = nextId;
+
+        unchecked {
+            for (uint256 i; i < count; ++i) {
+                if (bytes(uris[i]).length == 0) revert InvalidURI();
+                
+                uint256 tokenId = startId + i;
+                uint8[5] memory stats = _generateStats(lvl, tokenId);
+                characters[tokenId] = Character({level: lvl, stats: stats});
+                
+                // 使用 _safeMint 自动处理 ERC721Receiver 检查
+                _safeMint(to, tokenId);
+                _setTokenURI(tokenId, uris[i]);
+                tokenIds[i] = tokenId;
+            }
+            _nextTokenId = startId + count;
+        }
+
+        emit BatchMinted(to, startId, count, lvl);
+    }
+
+    /**
+     * @dev 生成随机属性
+     */
+    function _generateStats(Level lvl, uint256 seed) private view returns (uint8[5] memory stats) {
+        uint256 rand = uint256(keccak256(abi.encodePacked(
+            seed,
+            block.prevrandao,
+            block.timestamp,
+            msg.sender
+        )));
+
+        // 等级基础点数：Common=25, Rare=30, Epic=35
+        uint8 basePoints = 25 + uint8(lvl) * 5;
+        uint8 bonus = uint8(rand % 11); // 0-10随机加成
+        uint8 totalPoints = basePoints + bonus;
+
+        // 每维至少1点
+        for (uint8 i; i < 5; ++i) {
+            stats[i] = 1;
+        }
+
+        // 随机分配剩余点数
+        uint8 remaining = totalPoints - 5;
+        for (uint8 i; i < remaining; ++i) {
+            uint8 idx = uint8(uint256(keccak256(abi.encodePacked(rand, i))) % 5);
+            stats[idx]++;
+        }
+    }
+
+
+
+    /**
+     * @dev 安全的ERC20转账
+     */
+    function _safeTransferERC20(address token, address from, address to, uint256 amount) private {
+        if (amount == 0) revert InvalidAmount();
+        if (token.code.length == 0) revert TokenNotAccepted();
+
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, amount)
+        );
+        
+        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) {
+            revert TransferFailed();
+        }
+    }
+
+    // ============ 所有者铸造（免费）============
+
+    /**
+     * @notice 所有者单个铸造
+     */
+    function ownerMint(address to, Level lvl, string calldata uri) 
+        external 
+        onlyOwner 
+        whenNotPaused 
+        returns (uint256) 
+    {
+        return _mintNFT(to, lvl, uri);
+    }
+
+    /**
+     * @notice 所有者批量铸造
+     */
+    function ownerBatchMint(address to, Level lvl, string[] calldata uris) 
+        external 
+        onlyOwner 
+        whenNotPaused 
+        returns (uint256[] memory) 
+    {
+        return _batchMintNFT(to, lvl, uris);
+    }
+
+    // ============ ETH支付铸造 ============
+
+    /**
+     * @notice ETH支付单个铸造
+     */
+    function mint(Level lvl, string calldata uri) 
+        external 
+        payable 
+        nonReentrant 
+        whenNotPaused 
+        returns (uint256 tokenId) 
+    {
+        uint256 price = levelPrices[lvl];
+        if (price == 0) revert PriceNotSet();
+        if (msg.value < price) revert InsufficientPayment();
+
+        tokenId = _mintNFT(msg.sender, lvl, uri);
+
+        // 退还多余ETH
+        if (msg.value > price) {
+            unchecked {
+                uint256 refund = msg.value - price;
+                (bool success, ) = msg.sender.call{value: refund}("");
+                if (!success) revert TransferFailed();
+            }
+        }
+    }
+
+    /**
+     * @notice ETH支付批量铸造
+     */
+    function mintBatch(Level lvl, string[] calldata uris) 
+        external 
+        payable 
+        nonReentrant 
+        whenNotPaused 
+        returns (uint256[] memory tokenIds) 
+    {
+        uint256 price = levelPrices[lvl];
+        if (price == 0) revert PriceNotSet();
+        
+        uint256 totalPrice;
+        unchecked {
+            totalPrice = price * uris.length;
+        }
+        if (msg.value < totalPrice) revert InsufficientPayment();
+
+        tokenIds = _batchMintNFT(msg.sender, lvl, uris);
+
+        // 退还多余ETH
+        if (msg.value > totalPrice) {
+            unchecked {
+                uint256 refund = msg.value - totalPrice;
+                (bool success, ) = msg.sender.call{value: refund}("");
+                if (!success) revert TransferFailed();
+            }
+        }
+    }
+
+    // ============ ERC20支付铸造 ============
+
+    /**
+     * @notice ERC20支付单个铸造
+     */
+    function mintWithToken(Level lvl, string calldata uri, address token) 
+        external 
+        nonReentrant 
+        whenNotPaused 
+        returns (uint256) 
+    {
+        if (!acceptedTokens[token]) revert TokenNotAccepted();
+        
+        uint256 price = levelPrices[lvl];
+        if (price == 0) revert PriceNotSet();
+
+        _safeTransferERC20(token, msg.sender, address(this), price);
+        return _mintNFT(msg.sender, lvl, uri);
+    }
+
+    /**
+     * @notice ERC20支付批量铸造
+     */
+    function mintBatchWithToken(Level lvl, string[] calldata uris, address token) 
+        external 
+        nonReentrant 
+        whenNotPaused 
+        returns (uint256[] memory) 
+    {
+        if (!acceptedTokens[token]) revert TokenNotAccepted();
+        
+        uint256 price = levelPrices[lvl];
+        if (price == 0) revert PriceNotSet();
+
+        uint256 totalPrice;
+        unchecked {
+            totalPrice = price * uris.length;
+        }
+
+        _safeTransferERC20(token, msg.sender, address(this), totalPrice);
+        return _batchMintNFT(msg.sender, lvl, uris);
+    }
+
+
+
+    // ============ 管理功能 ============
+
+    /**
+     * @notice 设置等级价格
+     */
+    function setLevelPrice(Level lvl, uint256 price) external onlyOwner {
+        if (price == 0) revert InvalidPrice();
+        if (levelPrices[lvl] == price) revert InvalidAmount();
+        levelPrices[lvl] = price;
+        emit LevelPriceUpdated(lvl, price);
+    }
+
+    /**
+     * @notice 批量设置等级价格
+     */
+    function setLevelPrices(uint256 commonPrice, uint256 rarePrice, uint256 epicPrice) external onlyOwner {
+        levelPrices[Level.Common] = commonPrice;
+        levelPrices[Level.Rare] = rarePrice;
+        levelPrices[Level.Epic] = epicPrice;
+        
+        emit LevelPriceUpdated(Level.Common, commonPrice);
+        emit LevelPriceUpdated(Level.Rare, rarePrice);
+        emit LevelPriceUpdated(Level.Epic, epicPrice);
+    }
+
+    /**
+     * @notice 设置ERC20代币接受状态
+     */
+    function setTokenAcceptance(address token, bool accepted) external onlyOwner {
+        if (token == address(0)) revert InvalidAddress();
+        if (token.code.length == 0) revert TokenNotAccepted();
+        if (acceptedTokens[token] == accepted) revert InvalidAmount();
+
+        acceptedTokens[token] = accepted;
+        emit TokenAcceptanceUpdated(token, accepted);
+    }
+
+    /**
+     * @notice 批量设置ERC20代币接受状态
+     */
+    function setTokenAcceptanceBatch(address[] calldata tokens, bool accepted) external onlyOwner {
+        uint256 length = tokens.length;
+        for (uint256 i; i < length;) {
+            address token = tokens[i];
+            if (token == address(0)) revert InvalidAddress();
+            if (token.code.length == 0) revert TokenNotAccepted();
+            
+            acceptedTokens[token] = accepted;
+            emit TokenAcceptanceUpdated(token, accepted);
+            
+            unchecked { ++i; }
+        }
+    }
+
+    /**
+     * @notice 设置最大供应量
+     */
+    function setMaxSupply(uint256 _maxSupply) external onlyOwner {
+        if (_maxSupply != 0) {
+            if (_maxSupply < _nextTokenId) revert InvalidAmount();
+        }
+        maxSupply = _maxSupply;
+        emit MaxSupplyUpdated(_maxSupply);
+    }
+    
+    // ============ 版税管理（EIP-2981）============
+
+    /**
+     * @notice 查询版税信息
+     */
+    function royaltyInfo(uint256 tokenId, uint256 salePrice)
+        external
+        view
+        override
+        returns (address receiver, uint256 royaltyAmount)
+    {
+        RoyaltyInfo memory royalty = _tokenRoyalties[tokenId];
+        
+        if (royalty.receiver != address(0)) {
+            receiver = royalty.receiver;
+            royaltyAmount = (salePrice * royalty.bps) / BPS_DENOMINATOR;
+        } else {
+            receiver = royaltyReceiver;
+            royaltyAmount = (salePrice * defaultRoyaltyBps) / BPS_DENOMINATOR;
+        }
+    }
+    
+    /**
+     * @notice 设置默认版税
+     */
+    function setDefaultRoyalty(address receiver, uint96 bps) external onlyOwner {
+        if (receiver == address(0)) revert InvalidAddress();
+        if (bps > BPS_DENOMINATOR) revert RoyaltyTooHigh();
+        if (royaltyReceiver == receiver && defaultRoyaltyBps == bps) revert InvalidAmount();
+        
+        royaltyReceiver = receiver;
+        defaultRoyaltyBps = bps;
+        
+        emit DefaultRoyaltyUpdated(receiver, bps);
+    }
+    
+    /**
+     * @notice 为特定NFT设置版税
+     */
+    function setTokenRoyalty(uint256 tokenId, address receiver, uint96 bps) external onlyOwner {
+        if (receiver == address(0)) revert InvalidAddress();
+        if (bps > BPS_DENOMINATOR) revert RoyaltyTooHigh();
+        if (_ownerOf(tokenId) == address(0)) revert InvalidAmount();
+        
+        _tokenRoyalties[tokenId] = RoyaltyInfo(receiver, bps);
+        emit TokenRoyaltyUpdated(tokenId, receiver, bps);
+    }
+    
+    /**
+     * @notice 重置NFT版税（使用默认版税）
+     */
+    function resetTokenRoyalty(uint256 tokenId) external onlyOwner {
+        if (_ownerOf(tokenId) == address(0)) revert InvalidAmount();
+        delete _tokenRoyalties[tokenId];
+        emit TokenRoyaltyUpdated(tokenId, address(0), 0);
+    }
+
+    // ============ 资金提取 ============
+    
+    /**
+     * @notice 提取ETH
+     */
+    function withdraw(address payable to) external onlyOwner nonReentrant {
+        if (to == address(0)) revert InvalidAddress();
+
+        address self = address(this);
+        uint256 balance = self.balance;
+        if (balance == 0) revert NoBalance();
+
+        (bool success, ) = to.call{value: balance}("");
+        if (!success) revert TransferFailed();
+
+        emit FundsWithdrawn(address(0), to, balance);
+    }
+    
+    /**
+     * @notice 提取ERC20代币
+     */
+    function withdrawToken(address token, address to) external onlyOwner nonReentrant {
+        if (token == address(0)) revert InvalidAddress();
+        if (to == address(0)) revert InvalidAddress();
+        
+        address self = address(this);
+        uint256 balance = IERC20(token).balanceOf(self);
+        if (balance == 0) revert NoBalance();
+        
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, balance)
+        );
+        if (!success || (data.length > 0 && !abi.decode(data, (bool)))) {
+            revert TransferFailed();
+        }
+        
+        emit FundsWithdrawn(token, to, balance);
+    }
+    
+    // ============ 暂停机制 ============
+    
+    /**
+     * @notice 暂停合约
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    /**
+     * @notice 恢复合约
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+    
+    // ============ 查询功能 ============
+    
+    /**
+     * @notice 获取总供应量
+     */
+    function totalSupply() external view returns (uint256) {
+        return _nextTokenId;
+    }
+    
+    /**
+     * @notice 获取下一个代币ID
+     */
+    function nextTokenId() external view returns (uint256) {
+        return _nextTokenId;
+    }
+    
+    /**
+     * @notice 检查NFT是否存在
+     */
+    function exists(uint256 tokenId) external view returns (bool) {
+        return _ownerOf(tokenId) != address(0);
+    }
+    
+    /**
+     * @notice 获取用户拥有的所有NFT
+     * @dev 限制返回数量避免gas耗尽，链下使用事件索引
+     */
+    function tokensOfOwner(address owner) external view returns (uint256[] memory) {
+        if (owner == address(0)) revert InvalidAddress();
+
+        uint256 balance = balanceOf(owner);
+        uint256 maxReturn = balance > MAX_QUERY_SIZE ? MAX_QUERY_SIZE : balance;
+        
+        uint256[] memory tokens = new uint256[](maxReturn);
+        uint256 index;
+        uint256 supply = _nextTokenId;
+
+        unchecked {
+            for (uint256 i; i < supply && index < maxReturn; ++i) {
+                if (_ownerOf(i) == owner) {
+                    tokens[index++] = i;
+                }
+            }
+        }
+
+        return tokens;
+    }
+    
+    /**
+     * @notice 批量获取NFT URI
+     */
+    function batchTokenURI(uint256[] calldata tokenIds) external view returns (string[] memory) {
+        uint256 length = tokenIds.length;
+        string[] memory uris = new string[](length);
+        
+        unchecked {
+            for (uint256 i; i < length; ++i) {
+                uris[i] = tokenURI(tokenIds[i]);
+            }
+        }
+        
+        return uris;
+    }
+
+    /**
+     * @notice 批量获取角色属性
+     */
+    function batchGetCharacters(uint256[] calldata tokenIds) external view returns (Character[] memory) {
+        uint256 length = tokenIds.length;
+        Character[] memory chars = new Character[](length);
+        
+        unchecked {
+            for (uint256 i; i < length; ++i) {
+                chars[i] = characters[tokenIds[i]];
+            }
+        }
+        
+        return chars;
+    }
+    
+    /**
+     * @notice 获取合约配置
+     */
+    function getConfig() external view returns (
+        uint256 supply,
+        uint256 max,
+        address royaltyAddr,
+        uint96 royaltyBps,
+        bool isPaused
+    ) {
+        return (
+            _nextTokenId,
+            maxSupply,
+            royaltyReceiver,
+            defaultRoyaltyBps,
+            paused()
+        );
+    }
+
+    /**
+     * @notice 获取等级价格配置
+     */
+    function getLevelPrices() external view returns (
+        uint256 commonPrice,
+        uint256 rarePrice,
+        uint256 epicPrice
+    ) {
+        return (
+            levelPrices[Level.Common],
+            levelPrices[Level.Rare],
+            levelPrices[Level.Epic]
+        );
+    }
+
+    // ============ 重写函数 ============
+    
+    function tokenURI(uint256 tokenId)
+        public
+        view
+        override(ERC721, ERC721URIStorage)
+        returns (string memory)
+    {
+        return super.tokenURI(tokenId);
+    }
+    
+    function supportsInterface(bytes4 interfaceId)
+        public
+        view
+        override(ERC721, ERC721URIStorage, IERC165)
+        returns (bool)
+    {
+        return 
+            interfaceId == type(IERC2981).interfaceId || 
+            super.supportsInterface(interfaceId);
+    }
+
+    // ============ 接收ETH ============
+    
+    receive() external payable {}
+}
