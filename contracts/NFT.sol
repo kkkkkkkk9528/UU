@@ -13,7 +13,7 @@ import "@openzeppelin/contracts/interfaces/IERC2981.sol";
 
 /**
  * @title NFT(塞翁马版)
- * @notice 支持多种铸造方式、等级系统和版税的 NFT 合约1
+ * @notice 支持多种铸造方式、等级系统和版税的 NFT 合约
  * @dev 实现 ERC721、ERC721Enumerable、ERC2981 标准
  * 
  * 核心功能：
