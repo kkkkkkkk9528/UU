@@ -9,7 +9,8 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title Simple BEP20 Token
- * @notice 标准 ERC20 代币，支持铸造、销毁、暂停、批量转账、Permit 签名授权
+ * @notice Standard ERC20 token supporting minting, burning, pausing, batch transfers, Permit signature authorization
+ * @dev Fill parameters directly when deploying on Remix
  */
 contract Token is ERC20, ERC20Permit, ERC20Burnable, Ownable, Pausable {
     
@@ -25,11 +26,11 @@ contract Token is ERC20, ERC20Permit, ERC20Burnable, Ownable, Pausable {
     event TokenMinted(address indexed to, uint256 amount);
 
     /**
-     * @notice 部署代币
-     * @param name_ 代币名称
-     * @param symbol_ 代币符号
-     * @param decimals_ 精度 (通常 18)
-     * @param initialSupply_ 初始供应量 (不含精度，如 1000000 = 100万)
+     * @notice Deploy token
+     * @param name_ Token name
+     * @param symbol_ Token symbol
+     * @param decimals_ Decimals (usually 18)
+     * @param initialSupply_ Initial supply (without decimals, e.g. 1000000 = 1 million)
      */
     constructor(
         string memory name_,
@@ -47,23 +48,23 @@ contract Token is ERC20, ERC20Permit, ERC20Burnable, Ownable, Pausable {
         return _decimals;
     }
 
-    /// @notice 铸造代币 (仅 owner)
+    /// @notice Mint tokens (owner only)
     function mint(address to, uint256 amount) external onlyOwner {
         _mint(to, amount);
         emit TokenMinted(to, amount);
     }
 
-    /// @notice 暂停转账
+    /// @notice Pause transfers
     function pause() external onlyOwner {
         _pause();
     }
 
-    /// @notice 恢复转账
+    /// @notice Unpause transfers
     function unpause() external onlyOwner {
         _unpause();
     }
 
-    /// @notice 批量转账
+    /// @notice Batch transfer
     function batchTransfer(
         address[] calldata recipients,
         uint256[] calldata amounts

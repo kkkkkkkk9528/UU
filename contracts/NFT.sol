@@ -9,10 +9,10 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 /**
  * @title NFT
- * @notice 分等级 ERC721 NFT 合约，支持收藏品稀有度 + 会员权益
- * @dev 
- * 等级体系: Silver(1) → Gold(2) → Diamond(3)
- * 每个等级有独立铸造价格、供应上限、权益倍数
+ * @notice Tiered ERC721 NFT contract supporting collectible rarity + membership benefits
+ * @dev
+ * Tier system: Silver(1) → Gold(2) → Diamond(3)
+ * Each tier has independent mint price, supply cap, benefit multiplier
  */
 contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, ReentrancyGuard {
     
@@ -20,41 +20,41 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     //                         ENUMS
     // ============================================================
     
-    /// @notice NFT 等级
+    /// @notice NFT tier
     enum Tier {
-        None,       // 0 - 无效
-        Silver,     // 1 - 白银
-        Gold,       // 2 - 黄金
-        Diamond     // 3 - 钻石
+        None,       // 0 - Invalid
+        Silver,     // 1 - Silver
+        Gold,       // 2 - Gold
+        Diamond     // 3 - Diamond
     }
 
     // ============================================================
     //                        STRUCTS
     // ============================================================
     
-    /// @notice 等级配置
+    /// @notice Tier configuration
     struct TierConfig {
-        uint64 maxSupply;         // 该等级最大供应量（0 = 无限制）
-        uint64 minted;            // 该等级已铸造数量
-        uint128 mintPrice;        // 铸造价格
-        uint16 benefitMultiplier; // 权益倍数 (100 = 1x, 200 = 2x)
-        bool publicMintEnabled;   // 是否开放公开铸造
+        uint64 maxSupply;         // Max supply for this tier (0 = unlimited)
+        uint64 minted;            // Number minted for this tier
+        uint128 mintPrice;        // Mint price
+        uint16 benefitMultiplier; // Benefit multiplier (100 = 1x, 200 = 2x)
+        bool publicMintEnabled;   // Whether public minting is enabled
     }
 
     // ============================================================
     //                        STORAGE
     // ============================================================
     
-    /// @notice 下一个 tokenId（从 1 开始）
+    /// @notice Next tokenId (starts from 1)
     uint256 private _nextTokenId;
-    
-    /// @notice 基础 URI
+
+    /// @notice Base URI
     string private _baseTokenURI;
-    
-    /// @notice tokenId => 等级
+
+    /// @notice tokenId => tier
     mapping(uint256 => Tier) private _tokenTier;
-    
-    /// @notice 等级 => 配置
+
+    /// @notice tier => configuration
     mapping(Tier => TierConfig) public tierConfigs;
 
     // ============================================================
@@ -85,10 +85,10 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     // ============================================================
     
     /**
-     * @param name_ NFT 名称
-     * @param symbol_ NFT 符号
-     * @param owner_ 合约所有者
-     * @param baseURI_ 基础 URI
+     * @param name_ NFT name
+     * @param symbol_ NFT symbol
+     * @param owner_ Contract owner
+     * @param baseURI_ Base URI
      */
     constructor(
         string memory name_,
@@ -101,10 +101,10 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
         _nextTokenId = 1;
         _baseTokenURI = baseURI_;
         
-        // 默认等级配置 (总量 21000)
-        // Silver: 12000, 1x 权益
-        // Gold:   8000, 2x 权益
-        // Diamond: 2100, 5x 权益
+        // Default tier configurations (total supply: 21000)
+        // Silver: 12000, 1x benefits
+        // Gold:   8000, 2x benefits
+        // Diamond: 2100, 5x benefits
         tierConfigs[Tier.Silver]  = TierConfig(12000, 0, 0.05 ether, 100, false);
         tierConfigs[Tier.Gold]    = TierConfig(8000,  0, 0.05 ether, 200, false);
         tierConfigs[Tier.Diamond] = TierConfig(2100,  0, 0.05 ether, 500, false);
@@ -115,21 +115,21 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     // ============================================================
     
     /**
-     * @notice Owner 铸造指定等级 NFT
-     * @param to 接收地址
-     * @param tier 等级
-     * @return tokenId 铸造的 tokenId
+     * @notice Owner mint specific tier NFT
+     * @param to Recipient address
+     * @param tier Tier
+     * @return tokenId Minted tokenId
      */
     function mint(address to, Tier tier) external onlyOwner returns (uint256 tokenId) {
         tokenId = _mintWithTier(to, tier);
     }
     
     /**
-     * @notice Owner 铸造并设置 URI
-     * @param to 接收地址
-     * @param tier 等级
+     * @notice Owner mint and set URI
+     * @param to Recipient address
+     * @param tier Tier
      * @param uri Token URI
-     * @return tokenId 铸造的 tokenId
+     * @return tokenId Minted tokenId
      */
     function mintWithURI(address to, Tier tier, string calldata uri) external onlyOwner returns (uint256 tokenId) {
         tokenId = _mintWithTier(to, tier);
@@ -137,15 +137,15 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice Owner 批量铸造同等级 NFT 并设置 URI
-     * @param to 接收地址
-     * @param tier 等级
-     * @param amount 铸造数量
-     * @param uri 所有 token 共用的 URI
-     * @return startTokenId 起始 tokenId
+     * @notice Owner batch mint same tier NFTs and set URI
+     * @param to Recipient address
+     * @param tier Tier
+     * @param amount Mint amount
+     * @param uri Shared URI for all tokens
+     * @return startTokenId Starting tokenId
      */
     function batchMintWithURI(address to, Tier tier, uint256 amount, string calldata uri) external onlyOwner returns (uint256 startTokenId) {
-        if (amount == 0 || amount > 1000) revert ErrInvalidAmount();  // 带 URI 限制 1000，避免 gas 过高
+        if (amount == 0 || amount > 1000) revert ErrInvalidAmount();  // Limit 1000 with URI to avoid high gas costs
         if (to == address(0)) revert ErrZeroAddress();
         _validateTier(tier);
         
@@ -170,9 +170,9 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 公开铸造指定等级
-     * @param tier 等级
-     * @return tokenId 铸造的 tokenId
+     * @notice Public mint specific tier
+     * @param tier Tier
+     * @return tokenId Minted tokenId
      */
     function publicMint(Tier tier) external payable nonReentrant returns (uint256 tokenId) {
         _validateTier(tier);
@@ -189,8 +189,8 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     // ============================================================
     
     /**
-     * @notice 销毁 NFT（仅 token 持有者）
-     * @param tokenId 要销毁的 tokenId
+     * @notice Burn NFT (token owner only)
+     * @param tokenId TokenId to burn
      */
     function burn(uint256 tokenId) external {
         if (ownerOf(tokenId) != msg.sender) revert ErrNotTokenOwner();
@@ -211,11 +211,11 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     // ============================================================
     
     /**
-     * @notice 设置等级配置
-     * @param tier 等级
-     * @param maxSupply 最大供应量
-     * @param mintPrice 铸造价格
-     * @param benefitMultiplier 权益倍数
+     * @notice Set tier configuration
+     * @param tier Tier
+     * @param maxSupply Max supply
+     * @param mintPrice Mint price
+     * @param benefitMultiplier Benefit multiplier
      */
     function setTierConfig(
         Tier tier,
@@ -234,9 +234,9 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 开启/关闭指定等级的公开铸造
-     * @param tier 等级
-     * @param enabled 是否开启
+     * @notice Enable/disable public minting for specific tier
+     * @param tier Tier
+     * @param enabled Whether to enable
      */
     function setTierPublicMint(Tier tier, bool enabled) external onlyOwner {
         _validateTier(tier);
@@ -245,8 +245,8 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 设置基础 URI
-     * @param baseURI_ 新的基础 URI
+     * @notice Set base URI
+     * @param baseURI_ New base URI
      */
     function setBaseURI(string calldata baseURI_) external onlyOwner {
         _baseTokenURI = baseURI_;
@@ -254,22 +254,22 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 设置单个 token 的 URI
+     * @notice Set individual token URI
      * @param tokenId Token ID
-     * @param uri 新的 URI
+     * @param uri New URI
      */
     function setTokenURI(uint256 tokenId, string calldata uri) external onlyOwner {
         _setTokenURI(tokenId, uri);
     }
     
     /**
-     * @notice 提取合约余额
-     * @param to 接收地址
+     * @notice Withdraw contract balance
+     * @param to Recipient address
      */
     function withdraw(address to) external onlyOwner {
         if (to == address(0)) revert ErrZeroAddress();
 
-        payable(to).transfer(address(this).balance);  // 使用 transfer，更安全，有固定 gas 限制
+        payable(to).transfer(address(this).balance);  // Use transfer for security with fixed gas stipend
     }
 
     // ============================================================
@@ -277,18 +277,18 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     // ============================================================
     
     /**
-     * @notice 获取 token 等级
+     * @notice Get token tier
      * @param tokenId Token ID
-     * @return 等级
+     * @return Tier
      */
     function getTier(uint256 tokenId) external view returns (Tier) {
         return _tokenTier[tokenId];
     }
     
     /**
-     * @notice 获取 token 权益倍数
+     * @notice Get token benefit multiplier
      * @param tokenId Token ID
-     * @return 权益倍数 (100 = 1x)
+     * @return Benefit multiplier (100 = 1x)
      */
     function getBenefitMultiplier(uint256 tokenId) external view returns (uint16) {
         Tier tier = _tokenTier[tokenId];
@@ -297,9 +297,9 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 获取用户最高等级
-     * @param user 用户地址
-     * @return highestTier 最高等级
+     * @notice Get user's highest tier
+     * @param user User address
+     * @return highestTier Highest tier
      */
     function getUserHighestTier(address user) external view returns (Tier highestTier) {
         uint256 balance = balanceOf(user);
@@ -316,9 +316,9 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 获取用户权益倍数（取最高）
-     * @param user 用户地址
-     * @return 权益倍数 (100 = 1x)
+     * @notice Get user's benefit multiplier (highest)
+     * @param user User address
+     * @return Benefit multiplier (100 = 1x)
      */
     function getUserBenefitMultiplier(address user) external view returns (uint16) {
         uint256 balance = balanceOf(user);
@@ -339,10 +339,10 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 检查用户是否达到指定等级
-     * @param user 用户地址
-     * @param requiredTier 要求的等级
-     * @return 是否达到
+     * @notice Check if user has minimum tier
+     * @param user User address
+     * @param requiredTier Required tier
+     * @return Whether user has the tier
      */
     function hasMinTier(address user, Tier requiredTier) external view returns (bool) {
         uint256 balance = balanceOf(user);
@@ -357,11 +357,11 @@ contract NFT is ERC721, ERC721Enumerable, ERC721URIStorage, Ownable2Step, Reentr
     }
     
     /**
-     * @notice 获取等级统计信息
-     * @param tier 等级
-     * @return maxSupply 最大供应量
-     * @return minted 已铸造数量
-     * @return remaining 剩余可铸造数量
+     * @notice Get tier statistics
+     * @param tier Tier
+     * @return maxSupply Max supply
+     * @return minted Number minted
+     * @return remaining Remaining to mint
      */
     function getTierStats(Tier tier) external view returns (
         uint64 maxSupply,

@@ -10,13 +10,13 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 /**
  * @title UUPS Upgradeable Base Contract
  * @author SWM Team
- * @notice 可升级合约基类，支持多签钱包和 DAO 治理
- * 
- * @dev 
- * 权限优先级 (从高到低):
- * 1. DAO 模式    - daoGovernance 控制升级 (48h 延迟)
- * 2. MultiSig    - multiSig 控制升级 (24h 延迟)
- * 3. Owner 模式  - owner 控制升级 (24h 延迟)
+ * @notice Upgradeable contract base class supporting multisig wallet and DAO governance
+
+ * @dev
+ * Permission priority (high to low):
+ * 1. DAO mode    - daoGovernance controls upgrades (48h delay)
+ * 2. MultiSig    - multiSig controls upgrades (24h delay)
+ * 3. Owner mode  - owner controls upgrades (24h delay)
  */
 abstract contract UUPSUpgradeableBase is
     Initializable,
@@ -29,118 +29,118 @@ abstract contract UUPSUpgradeableBase is
     //                        CONSTANTS
     // ============================================================
     
-    /// @dev Owner/MultiSig 升级延迟（24小时）
+    /// @dev Owner/MultiSig upgrade delay (24 hours)
     uint48 private constant _UPGRADE_DELAY = 24 hours;
-    
-    /// @dev DAO 升级延迟（48小时）
+
+    /// @dev DAO upgrade delay (48 hours)
     uint48 private constant _DAO_DELAY = 48 hours;
-    
-    /// @dev 升级过期时间（7天）
+
+    /// @dev Upgrade expiry time (7 days)
     uint48 private constant _UPGRADE_EXPIRY = 7 days;
 
     // ============================================================
     //                         STORAGE
     // ============================================================
     
-    /// @notice 多签钱包地址
+    /// @notice Multisig wallet address
     address public multiSig;
-    
-    /// @notice DAO 治理合约地址
+
+    /// @notice DAO governance contract address
     address public daoGovernance;
-    
-    /// @notice 是否启用多签控制
+
+    /// @notice Whether multisig control is enabled
     bool public multiSigEnabled;
-    
-    /// @notice 是否启用 DAO 治理
+
+    /// @notice Whether DAO governance is enabled
     bool public daoEnabled;
-    
-    /// @notice 是否启用升级时间锁
+
+    /// @notice Whether upgrade timelock is enabled
     bool public timelockEnabled;
-    
-    /// @notice 待升级的实现合约地址
+
+    /// @notice Pending implementation contract address for upgrade
     address public pendingImplementation;
-    
-    /// @notice 升级请求时间戳
+
+    /// @notice Upgrade request timestamp
     uint48 public upgradeRequestTime;
-    
-    /// @notice 升级请求发起者
+
+    /// @notice Upgrade request initiator
     address public upgradeRequester;
 
     // ============================================================
     //                      STORAGE GAP
     // ============================================================
     
-    /// @dev 预留 42 个存储槽位用于未来升级
+    /// @dev Reserve 42 storage slots for future upgrades
     uint256[42] private __gap;
 
     // ============================================================
     //                         ERRORS
     // ============================================================
     
-    /// @dev 零地址错误
+    /// @dev Zero address error
     error ErrZeroAddress();
-    
-    /// @dev 无效的实现合约（零地址或无代码）
+
+    /// @dev Invalid implementation contract (zero address or no code)
     error ErrInvalidImplementation();
-    
-    /// @dev 调用者无权限
+
+    /// @dev Caller has no permission
     error ErrUnauthorized();
-    
-    /// @dev 需要多签钱包权限
+
+    /// @dev Multisig wallet permission required
     error ErrMultiSigRequired();
-    
-    /// @dev 需要 DAO 权限
+
+    /// @dev DAO permission required
     error ErrDAORequired();
-    
-    /// @dev 时间锁已启用，不能直接升级
+
+    /// @dev Timelock is active, cannot upgrade directly
     error ErrTimelockActive();
-    
-    /// @dev 升级未就绪（未到延迟时间）
+
+    /// @dev Upgrade not ready (delay time not reached)
     error ErrUpgradeNotReady();
-    
-    /// @dev 升级已过期
+
+    /// @dev Upgrade has expired
     error ErrUpgradeExpired();
-    
-    /// @dev 无待处理的升级请求
+
+    /// @dev No pending upgrade request
     error ErrNoPendingUpgrade();
-    
-    /// @dev 值未改变
+
+    /// @dev Value not changed
     error ErrNoChange();
-    
-    /// @dev 功能未启用
+
+    /// @dev Feature not enabled
     error ErrNotEnabled();
 
     // ============================================================
     //                         EVENTS
     // ============================================================
     
-    /// @dev 多签钱包地址变更
+    /// @dev Multisig wallet address updated
     event MultiSigUpdated(address indexed oldMultiSig, address indexed newMultiSig);
-    
-    /// @dev 多签控制开关
+
+    /// @dev Multisig control toggled
     event MultiSigToggled(bool enabled);
-    
-    /// @dev DAO 治理地址变更
+
+    /// @dev DAO governance address updated
     event DAOUpdated(address indexed oldDAO, address indexed newDAO);
-    
-    /// @dev DAO 治理开关
+
+    /// @dev DAO governance toggled
     event DAOToggled(bool enabled);
-    
-    /// @dev 时间锁开关
+
+    /// @dev Timelock toggled
     event TimelockToggled(bool enabled);
-    
-    /// @dev 升级请求发起
+
+    /// @dev Upgrade request initiated
     event UpgradeRequested(
         address indexed requester,
         address indexed newImplementation,
         uint256 readyTime,
         uint256 expiryTime
     );
-    
-    /// @dev 升级请求取消
+
+    /// @dev Upgrade request cancelled
     event UpgradeCancelled(address indexed implementation, address indexed cancelledBy);
-    
-    /// @dev 升级执行完成
+
+    /// @dev Upgrade executed successfully
     event UpgradeExecuted(
         address indexed oldImplementation,
         address indexed newImplementation,
@@ -152,15 +152,15 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @dev 只有 owner 或多签钱包可调用
+     * @dev Only owner or multisig wallet can call
      */
     modifier onlyOwnerOrMultiSig() {
         _checkOwnerOrMultiSig();
         _;
     }
-    
+
     /**
-     * @dev 只有有升级权限的地址可调用
+     * @dev Only addresses with upgrade permission can call
      */
     modifier onlyUpgradeAuth() {
         _checkUpgradeAuth();
@@ -172,7 +172,7 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @dev 禁用实现合约的初始化
+     * @dev Disable initialization for implementation contract
      * @custom:oz-upgrades-unsafe-allow constructor
      */
     constructor() {
@@ -184,8 +184,8 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 基础初始化（仅 owner）
-     * @param owner_ 合约所有者地址
+     * @notice Basic initialization (owner only)
+     * @param owner_ Contract owner address
      */
     function __UUPSBase_init(address owner_) internal onlyInitializing {
         if (owner_ == address(0)) revert ErrZeroAddress();
@@ -196,15 +196,15 @@ abstract contract UUPSUpgradeableBase is
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
         
-        // 默认启用时间锁
+        // Enable timelock by default
         timelockEnabled = true;
     }
     
     /**
-     * @notice 完整初始化（owner + 多签 + DAO）
-     * @param owner_ 合约所有者地址
-     * @param multiSig_ 多签钱包地址（可为零地址）
-     * @param dao_ DAO 治理合约地址（可为零地址）
+     * @notice Full initialization (owner + multisig + DAO)
+     * @param owner_ Contract owner address
+     * @param multiSig_ Multisig wallet address (can be zero address)
+     * @param dao_ DAO governance contract address (can be zero address)
      */
     function __UUPSBase_init(
         address owner_,
@@ -229,37 +229,37 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 获取合约版本
-     * @return 版本字符串
-     * @dev 子合约应覆盖此函数返回新版本号
+     * @notice Get contract version
+     * @return Version string
+     * @dev Subcontracts should override this function to return new version number
      */
     function version() public pure virtual returns (string memory) {
         return "1.0.0";
     }
     
     /**
-     * @notice 获取升级延迟时间
-     * @return delay 延迟秒数
+     * @notice Get upgrade delay time
+     * @return delay Delay in seconds
      */
     function getUpgradeDelay() public view returns (uint48 delay) {
         delay = daoEnabled ? _DAO_DELAY : _UPGRADE_DELAY;
     }
     
     /**
-     * @notice 获取升级过期时间
-     * @return 过期秒数
+     * @notice Get upgrade expiry time
+     * @return Expiry seconds
      */
     function getUpgradeExpiry() external pure returns (uint48) {
         return _UPGRADE_EXPIRY;
     }
     
     /**
-     * @notice 查询升级状态
-     * @return pending 待升级的实现合约地址
-     * @return requester 升级请求发起者
-     * @return ready 是否可以执行升级
-     * @return readyTime 升级就绪时间
-     * @return expiryTime 升级过期时间
+     * @notice Query upgrade status
+     * @return pending Pending implementation contract address for upgrade
+     * @return requester Upgrade request initiator
+     * @return ready Whether upgrade can be executed
+     * @return readyTime Upgrade ready time
+     * @return expiryTime Upgrade expiry time
      */
     function getUpgradeStatus() external view returns (
         address pending,
@@ -284,9 +284,9 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 检查地址是否有升级权限
-     * @param account 要检查的地址
-     * @return 是否有权限
+     * @notice Check if address has upgrade permission
+     * @param account Address to check
+     * @return Whether has permission
      */
     function hasUpgradeAuth(address account) public view returns (bool) {
         if (daoEnabled) {
@@ -299,7 +299,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 获取当前权限模式
+     * @notice Get current permission mode
      * @return mode 0=Owner, 1=MultiSig, 2=DAO
      */
     function getAuthMode() external view returns (uint8 mode) {
@@ -313,16 +313,16 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 暂停合约
-     * @dev owner 或多签钱包可调用
+     * @notice Pause contract
+     * @dev Owner or multisig wallet can call
      */
     function pause() external onlyOwnerOrMultiSig {
         _pause();
     }
     
     /**
-     * @notice 恢复合约
-     * @dev owner 或多签钱包可调用
+     * @notice Unpause contract
+     * @dev Owner or multisig wallet can call
      */
     function unpause() external onlyOwnerOrMultiSig {
         _unpause();
@@ -333,8 +333,8 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 设置多签钱包地址
-     * @param newMultiSig 新多签钱包地址
+     * @notice Set multisig wallet address
+     * @param newMultiSig New multisig wallet address
      */
     function setMultiSig(address newMultiSig) external onlyOwner {
         if (newMultiSig == address(0)) revert ErrZeroAddress();
@@ -347,8 +347,8 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 开启多签控制
-     * @dev 必须先设置多签地址
+     * @notice Enable multisig control
+     * @dev Must set multisig address first
      */
     function enableMultiSig() external onlyOwner {
         if (multiSig == address(0)) revert ErrZeroAddress();
@@ -359,7 +359,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 关闭多签控制
+     * @notice Disable multisig control
      */
     function disableMultiSig() external onlyOwner {
         if (!multiSigEnabled) revert ErrNoChange();
@@ -373,8 +373,8 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 设置 DAO 治理合约地址
-     * @param newDAO 新 DAO 合约地址
+     * @notice Set DAO governance contract address
+     * @param newDAO New DAO contract address
      */
     function setDAOGovernance(address newDAO) external onlyOwner {
         if (newDAO == address(0)) revert ErrZeroAddress();
@@ -387,11 +387,11 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 开启 DAO 治理
-     * @dev 
-     * - 必须先设置 DAO 地址
-     * - 启用后升级权限转移给 DAO
-     * - 升级延迟变为 48 小时
+     * @notice Enable DAO governance
+     * @dev
+     * - Must set DAO address first
+     * - After enabling, upgrade permission transfers to DAO
+     * - Upgrade delay becomes 48 hours
      */
     function enableDAO() external onlyOwner {
         if (daoGovernance == address(0)) revert ErrZeroAddress();
@@ -402,8 +402,8 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 关闭 DAO 治理
-     * @dev 关闭后升级权限回到 owner 或多签
+     * @notice Disable DAO governance
+     * @dev After disabling, upgrade permission returns to owner or multisig
      */
     function disableDAO() external onlyOwner {
         if (!daoEnabled) revert ErrNoChange();
@@ -417,7 +417,7 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 开启升级时间锁
+     * @notice Enable upgrade timelock
      */
     function enableTimelock() external onlyOwner {
         if (timelockEnabled) revert ErrNoChange();
@@ -427,8 +427,8 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 关闭升级时间锁
-     * @dev 危险操作，关闭后可直接升级
+     * @notice Disable upgrade timelock
+     * @dev Dangerous operation, allows direct upgrades after disabling
      */
     function disableTimelock() external onlyOwner {
         if (!timelockEnabled) revert ErrNoChange();
@@ -442,17 +442,17 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @notice 请求升级
-     * @param newImplementation 新实现合约地址
-     * @dev 
-     * - Owner 模式: owner 发起，24h 延迟
-     * - MultiSig 模式: 多签发起，24h 延迟
-     * - DAO 模式: DAO 发起，48h 延迟
+     * @notice Request upgrade
+     * @param newImplementation New implementation contract address
+     * @dev
+     * - Owner mode: owner initiates, 24h delay
+     * - MultiSig mode: multisig initiates, 24h delay
+     * - DAO mode: DAO initiates, 48h delay
      */
     function requestUpgrade(address newImplementation) external onlyUpgradeAuth {
         _validateImplementation(newImplementation);
         
-        // 清除之前的请求（如果有）
+        // Clear previous request (if any)
         if (pendingImplementation != address(0)) {
             emit UpgradeCancelled(pendingImplementation, msg.sender);
         }
@@ -470,7 +470,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 取消升级请求
+     * @notice Cancel upgrade request
      */
     function cancelUpgrade() external onlyUpgradeAuth {
         address pending = pendingImplementation;
@@ -484,8 +484,8 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @notice 执行升级
-     * @dev 必须在延迟时间后、过期时间前执行
+     * @notice Execute upgrade
+     * @dev Must execute after delay time and before expiry time
      */
     function executeUpgrade() external onlyUpgradeAuth {
         address pending = pendingImplementation;
@@ -499,28 +499,28 @@ abstract contract UUPSUpgradeableBase is
         if (block.timestamp < readyTime) revert ErrUpgradeNotReady();
         if (block.timestamp > expiryTime) revert ErrUpgradeExpired();
         
-        // 先执行升级（_authorizeUpgrade 会检查 pendingImplementation）
+        // Execute upgrade first (_authorizeUpgrade will check pendingImplementation)
         upgradeToAndCall(pending, "");
-        
-        // 升级成功后清除状态
+
+        // Clear state after successful upgrade
         delete pendingImplementation;
         delete upgradeRequestTime;
         delete upgradeRequester;
     }
     
     /**
-     * @notice 紧急升级（无时间锁）
-     * @param newImplementation 新实现合约地址
-     * @dev 
-     * - 时间锁启用时不可用
-     * - 用于紧急修复漏洞
+     * @notice Emergency upgrade (no timelock)
+     * @param newImplementation New implementation contract address
+     * @dev
+     * - Not available when timelock is enabled
+     * - Used for emergency vulnerability fixes
      */
     function emergencyUpgrade(address newImplementation) external onlyUpgradeAuth {
         if (timelockEnabled) revert ErrTimelockActive();
         
         _validateImplementation(newImplementation);
         
-        // 清除任何待处理的升级
+        // Clear any pending upgrades
         if (pendingImplementation != address(0)) {
             emit UpgradeCancelled(pendingImplementation, msg.sender);
             delete pendingImplementation;
@@ -536,7 +536,7 @@ abstract contract UUPSUpgradeableBase is
     // ============================================================
     
     /**
-     * @dev 检查 owner 或多签权限
+     * @dev Check owner or multisig permission
      */
     function _checkOwnerOrMultiSig() internal view {
         address sender = msg.sender;
@@ -552,7 +552,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @dev 检查升级权限
+     * @dev Check upgrade permission
      */
     function _checkUpgradeAuth() internal view {
         address sender = msg.sender;
@@ -571,7 +571,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @dev 验证实现合约地址
+     * @dev Validate implementation contract address
      */
     function _validateImplementation(address impl) internal view {
         if (impl == address(0)) revert ErrZeroAddress();
@@ -580,13 +580,13 @@ abstract contract UUPSUpgradeableBase is
     
     /**
      * @inheritdoc UUPSUpgradeable
-     * @dev 授权升级检查
+     * @dev Authorize upgrade check
      */
     function _authorizeUpgrade(address newImplementation) internal virtual override {
         _checkUpgradeAuth();
         _validateImplementation(newImplementation);
         
-        // 时间锁模式：必须通过 requestUpgrade -> executeUpgrade 流程
+        // Timelock mode: must go through requestUpgrade -> executeUpgrade process
         if (timelockEnabled) {
             if (pendingImplementation != newImplementation) {
                 revert ErrTimelockActive();
@@ -598,7 +598,7 @@ abstract contract UUPSUpgradeableBase is
     }
     
     /**
-     * @dev 获取当前实现合约地址
+     * @dev Get current implementation contract address
      */
     function _getImplementation() internal view returns (address impl) {
         bytes32 slot = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
