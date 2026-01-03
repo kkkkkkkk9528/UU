@@ -313,8 +313,8 @@ contract NFTMarketplace is
 
         // Interactions: Process payment
         _processPayment(seller, nftAddr, tokenId, price, paymentToken);
-        
-        // 转移 NFT
+
+        // Transfer NFT
         IERC721(nftAddr).safeTransferFrom(seller, msg.sender, tokenId);
     }
 
@@ -451,16 +451,16 @@ contract NFTMarketplace is
         uint256 sellerAmount = price - platformFee - royaltyAmount;
         
         if (paymentToken == address(0)) {
-            // ETH 支付
+            // ETH payment
             if (msg.value < price) revert ErrInsufficientPayment();
-            
-            // 退还多余 ETH
+
+            // Refund excess ETH
             if (msg.value > price) {
                 (bool refundSuccess, ) = msg.sender.call{value: msg.value - price}("");
                 if (!refundSuccess) revert ErrTransferFailed();
             }
-            
-            // 分配资金
+
+            // Distribute funds
             if (platformFee != 0) {
                 (bool feeSuccess, ) = feeAddr.call{value: platformFee}("");
                 if (!feeSuccess) revert ErrTransferFailed();
@@ -475,7 +475,7 @@ contract NFTMarketplace is
             if (!sellerSuccess) revert ErrTransferFailed();
             
         } else {
-            // ERC20 支付
+            // ERC20 payment
             IERC20 token = IERC20(paymentToken);
             
             if (platformFee != 0) {
